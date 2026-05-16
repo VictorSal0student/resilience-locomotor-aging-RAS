@@ -1,4 +1,4 @@
-# Resilience Postural Salvat Victor
+# Resilience Locomotor Aging — Rhythmic Auditory Stimulation
 
 Pipeline for quantifying **locomotor resilience** in older adults (65+) during sand walking, under three auditory conditions: silence, random tempo, and adaptive beatMove.
 
