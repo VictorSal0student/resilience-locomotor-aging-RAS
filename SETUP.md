@@ -28,7 +28,7 @@ cp .env.example .env
 Then edit `.env`:
 
 ```
-PROJECT_ROOT=/absolute/path/to/resilience-postural-salvat-victor
+PROJECT_ROOT=/absolute/path/to/resilience-locomotor-aging-RAS
 RAW_DIR=/path/to/data/raw
 PROCESSED_DIR=/path/to/data/processed
 BEATMOVE_DIR=/path/to/data/beatmove
