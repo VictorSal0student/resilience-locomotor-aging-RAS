@@ -1,6 +1,0 @@
-metric,N,chi2,df,p,kendall_W,sig
-z_var,8,1.75,2,0.4169,0.109,ns
-z_radius,8,0.75,2,0.6873,0.047,ns
-ratio_var,8,4.839,2,0.089,0.302,ns
-ratio_radius,8,4.067,2,0.1309,0.254,ns
-delta_cadence_hz,8,0.609,2,0.7376,0.038,ns

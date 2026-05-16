@@ -1,9 +1,0 @@
-outputs/figures/
-├── fig1_pipeline_preprocessing.png    (méthodes)
-├── fig2_sand_detection.png            (méthodes)
-├── fig3_tde_parameters.png            (méthodes)
-├── fig4_torus_3d_simple.png           (mémoire : version pédagogique)
-├── fig4_torus_3d_full.png             (défense : version Antoine)
-├── fig5_resilience_signals.png        (résultats)
-├── fig6_stats_clean.png               (résultats principal)
-└── fig7_heatmap_ratiovar.png          (résultats individuels)
