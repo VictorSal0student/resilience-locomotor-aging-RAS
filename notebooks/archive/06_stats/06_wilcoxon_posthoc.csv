@@ -1,0 +1,16 @@
+metric,pair,N_eff,W,p_uncorrected,p_bonf,r,sig_bonf
+z_var,sil vs tem,10,15.0,0.2324,0.6973,0.403,ns
+z_var,sil vs bea,10,23.0,0.6953,1.0,0.145,ns
+z_var,tem vs bea,10,14.0,0.1934,0.5801,0.435,ns
+z_radius,sil vs tem,10,21.5,0.5723,1.0,0.193,ns
+z_radius,sil vs bea,10,26.0,0.9219,1.0,0.048,ns
+z_radius,tem vs bea,10,25.0,0.8457,1.0,0.081,ns
+ratio_var,sil vs tem,10,1.0,0.0039,0.0117,0.854,**
+ratio_var,sil vs bea,9,21.0,0.9102,1.0,0.059,ns
+ratio_var,tem vs bea,10,13.5,0.1641,0.4922,0.451,ns
+ratio_radius,sil vs tem,9,2.0,0.0117,0.0352,0.81,*
+ratio_radius,sil vs bea,9,22.0,1.0,1.0,0.02,ns
+ratio_radius,tem vs bea,10,17.0,0.3223,0.9668,0.338,ns
+delta_cadence_hz,sil vs tem,6,8.0,0.6875,1.0,0.214,ns
+delta_cadence_hz,sil vs bea,5,7.0,1.0,1.0,0.06,ns
+delta_cadence_hz,tem vs bea,6,8.0,0.6875,1.0,0.214,ns

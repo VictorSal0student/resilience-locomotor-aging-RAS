@@ -1,0 +1,632 @@
+========================================================================
+  EXPORT  2026-05-16 00:44:20   (1 fichier(s))
+========================================================================
+
+────────────────────────────────────────────────────────────────────────
+  1. 05_resilience.ipynb
+────────────────────────────────────────────────────────────────────────
+
+┌─ MARKDOWN #1 ──────────────────────────────────────────
+# 05 — Résilience locomotrice (Option C)
+
+Quantification de la résilience via comparaison **DANS le bac (perturbation)** vs **autres passages couloir (baseline)**.
+
+## Méthode (Option C, héritée du script exploratoire d'Antoine, adaptée bbox)
+
+1. Pour chaque essai, calculer 3 **signaux de résilience** depuis le sacrum Z :
+   - `sig_var` — variance glissante (fenêtre 1s) → variabilité verticale
+   - `sig_radius` — phase space radius (distance au centroïde TDE) → dispersion dynamique
+   - `sig_cadence` — fréquence dominante locale (Welch glissant) → cadence instantanée
+
+2. Détection des **passages dans le bac** (bbox, min_duration=0.5s pour capter tous les passages, même courts)
+
+3. **Plus long passage = perturbation** ; **autres passages = baseline**
+
+4. Métriques par essai :
+   - `z_var`, `z_radius` : Z-scores (pert - median_baseline) / std_baseline
+   - `ratio_var`, `ratio_radius` : pert / baseline (sans signe)
+   - `delta_cadence_hz` : pert_cadence − baseline_cadence
+
+5. **Critère d'exploitabilité** : `n_clean_passages ≥ 3` (sinon NaN, suivant la décision du 14/05)
+
+## Inputs
+
+- 38 .npz (signal_final + raw_Dos01-04)
+- `outputs/tables/04_tde_per_participant.csv` (tau_p, m_p par participant)
+- bbox detection via `detection.detect_sand_by_bbox`
+
+┌─ CODE #2 ──────────────────────────────────────────────
+from resilience import paths, participants, config
+from resilience.io import writer
+from resilience.processing import detection, tde
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.signal import welch
+from pathlib import Path
+%matplotlib inline
+
+pd.set_option('display.max_rows', 100)
+pd.set_option('display.width', 200)
+
+┌─ MARKDOWN #3 ──────────────────────────────────────────
+## Chargement params TDE par participant
+
+┌─ CODE #4 ──────────────────────────────────────────────
+TDE_CSV = Path(paths.OUTPUTS_DIR) / 'tables' / '04_tde_per_participant.csv'
+df_tde = pd.read_csv(TDE_CSV)
+print(f"✅ {len(df_tde)} participants chargés depuis {TDE_CSV.name}")
+df_tde.head()
+└── OUTPUT ─────────────────────────────────
+✅ 14 participants chargés depuis 04_tde_per_participant.csv
+└── OUTPUT ─────────────────────────────────
+participant  tau_p  m_p  tau_range  m_range
+0     001CrMa     16    4          1        0
+1     002CrPa     17    4          0        0
+2     003BrLu     18    4          2        0
+3     004CaGe     17    4          2        0
+4     005DeJe     16    4          0        0
+
+┌─ CODE #5 ──────────────────────────────────────────────
+# Dict participant -> (tau, m)
+TDE_PARAMS = {row['participant']: (int(row['tau_p']), int(row['m_p']))
+              for _, row in df_tde.iterrows()}
+print("TDE_PARAMS :")
+for code, (tau, m) in sorted(TDE_PARAMS.items()):
+    print(f"   {code} : τ={tau}, m={m}")
+└── OUTPUT ─────────────────────────────────
+TDE_PARAMS :
+   001CrMa : τ=16, m=4
+   002CrPa : τ=17, m=4
+   003BrLu : τ=18, m=4
+   004CaGe : τ=17, m=4
+   005DeJe : τ=16, m=4
+   006MoCa : τ=15, m=4
+   007MoMa : τ=15, m=4
+   008RiMo : τ=16, m=4
+   009DeFr : τ=16, m=4
+   010DeYv : τ=15, m=4
+   011RiJo : τ=19, m=4
+   012WaCh : τ=16, m=4
+   013WaJe : τ=16, m=4
+   014DeAn : τ=14, m=4
+
+┌─ MARKDOWN #6 ──────────────────────────────────────────
+## Calcul des signaux de résilience
+
+Repris du script exploratoire d'Antoine (cellule 1).
+
+┌─ CODE #7 ──────────────────────────────────────────────
+FS = config.FS_CLEAN  # 100 Hz
+
+def compute_resilience_signals(signal_z, tau, m, fs=FS, win_s=1.0):
+    """
+    Calcule les 3 signaux de résilience depuis le signal Z.
+
+    Returns
+    -------
+    dict avec :
+        sig_var      : variance glissante (fenêtre win_s, centrée)
+        sig_radius   : phase space radius (distance au centroïde TDE)
+        sig_cadence  : fréquence dominante locale (Hz, Welch non-overlapping)
+        time         : vecteur temps post-crop (s)
+    """
+    n = len(signal_z)
+    win = int(win_s * fs)
+
+    # --- S1 : variance glissante ---
+    sig_var = np.zeros(n)
+    half = win // 2
+    for i in range(n):
+        i0, i1 = max(0, i - half), min(n, i + half)
+        sig_var[i] = np.var(signal_z[i0:i1])
+
+    # --- S2 : phase space radius (distance au centroïde TDE) ---
+    ps = tde.phase_space_reconstruction(signal_z, tau=tau, dim=m)
+    centroid = ps.mean(axis=0)
+    radius = np.linalg.norm(ps - centroid, axis=1)
+    # Pad pour aligner sur signal_z (TDE perd (m-1)*tau frames au début)
+    pad = (m - 1) * tau
+    sig_radius = np.concatenate([np.full(pad, np.nan), radius])
+
+    # --- S3 : cadence locale (Welch non-overlapping) ---
+    sig_cadence = np.full(n, np.nan)
+    step = win
+    for i0 in range(0, n - win, step):
+        seg = signal_z[i0:i0 + win]
+        f, pxx = welch(seg, fs=fs, nperseg=min(len(seg), 512))
+        mask = (f >= 0.5) & (f <= 3.0)
+        if mask.any():
+            sig_cadence[i0:i0 + step] = f[mask][np.argmax(pxx[mask])]
+
+    time = np.arange(n) / fs
+    return {
+        'sig_var':     sig_var,
+        'sig_radius':  sig_radius,
+        'sig_cadence': sig_cadence,
+        'time':        time,
+    }
+
+┌─ MARKDOWN #8 ──────────────────────────────────────────
+## Chargement des essais + détection bbox (tous passages, min_duration=0.5s)
+
+┌─ CODE #9 ──────────────────────────────────────────────
+MIN_PASSAGE_S = 0.5  # min_duration pour capter aussi les passages baseline (rapides)
+
+def load_trial_with_passages(code, cond, trial):
+    """
+    Charge un essai et détecte tous les passages bbox (perturbation + baseline).
+
+    Returns dict avec :
+        signal_z (100 Hz, post-crop), time (post-crop),
+        pert_entry, pert_exit (post-crop, s)   — plus long passage
+        baseline_passages : list of (entry_local, exit_local) en s post-crop
+    """
+    d = writer.load_processed(code, cond)
+    signal_z = d['signal_final'].astype(float)
+    time     = d['time_final'].astype(float)
+
+    # Sacrum XY pour bbox
+    dos_xy = np.stack([d[f'raw_Dos{i:02d}'][:, :2] for i in range(1, 5)], axis=0)
+    sacrum_xy = np.nanmean(dos_xy, axis=0)
+    for ax in range(2):
+        col = sacrum_xy[:, ax]
+        if np.isnan(col).any():
+            idx = np.arange(len(col))
+            valid = ~np.isnan(col)
+            if valid.sum() >= 2:
+                col[~valid] = np.interp(idx[~valid], idx[valid], col[valid])
+            sacrum_xy[:, ax] = col
+
+    # Détection bbox avec min_duration=0.5s
+    det = detection.detect_sand_by_bbox(sacrum_xy, min_duration_s=MIN_PASSAGE_S)
+
+    if det['n_segments'] == 0:
+        return None
+
+    # Tous les segments en référentiel post-crop (le sacrum_xy est 400Hz, le signal_z est 100Hz)
+    # → timestamps via /FS_RAW directement (bbox tourne sur le sacrum brut 400Hz)
+    all_passages = [(i0/config.FS_RAW, i1/config.FS_RAW) for (i0, i1) in det['segments']]
+
+    # Plus long = perturbation
+    pert_idx = max(range(len(all_passages)),
+                    key=lambda k: all_passages[k][1] - all_passages[k][0])
+    pert_entry, pert_exit = all_passages[pert_idx]
+    baseline_passages = [p for i, p in enumerate(all_passages) if i != pert_idx]
+
+    return {
+        'signal_z':         signal_z,
+        'time':             time,
+        'pert_entry':       pert_entry,
+        'pert_exit':        pert_exit,
+        'baseline_passages': baseline_passages,
+        'n_total_passages': len(all_passages),
+    }
+
+
+TRIALS = {}
+for code, P in participants.PARTICIPANTS.items():
+    for cond, trial in P.trials.items():
+        if trial.excluded:
+            continue
+        try:
+            data = load_trial_with_passages(code, cond, trial)
+        except FileNotFoundError:
+            print(f"  ⚠️  Pas de .npz pour {code}/{cond}")
+            continue
+        if data is None:
+            print(f"  ⚠️  {code}/{cond} : 0 passage détecté")
+            continue
+        TRIALS[(code, cond)] = data
+
+print(f"\n✅ {len(TRIALS)} essais chargés avec passages bbox")
+
+# Stats passages
+n_passages = [d['n_total_passages'] for d in TRIALS.values()]
+print(f"\nPassages bbox par essai : min={min(n_passages)}, median={int(np.median(n_passages))}, max={max(n_passages)}")
+n_baseline = [len(d['baseline_passages']) for d in TRIALS.values()]
+print(f"   dont baseline (hors pert) : min={min(n_baseline)}, median={int(np.median(n_baseline))}, max={max(n_baseline)}")
+└── OUTPUT ─────────────────────────────────
+C:\Users\etulyon1\AppData\Local\Temp\ipykernel_2236\2147027178.py:18: RuntimeWarning: Mean of empty slice
+  sacrum_xy = np.nanmean(dos_xy, axis=0)
+└── OUTPUT ─────────────────────────────────
+✅ 38 essais chargés avec passages bbox
+
+Passages bbox par essai : min=1, median=1, max=2
+   dont baseline (hors pert) : min=0, median=0, max=1
+
+┌─ MARKDOWN #10 ──────────────────────────────────────────
+## Calcul métriques résilience par essai (Option C)
+
+Pour chaque essai :
+- Calcul des 3 signaux (var, radius, cadence) avec params TDE du participant
+- Moyennes des 3 signaux DANS le bac (pert)
+- Moyennes des 3 signaux sur les autres passages couloir (baseline median + std)
+- Métriques : z_var, z_radius, ratio_var, ratio_radius, delta_cadence_hz
+
+┌─ CODE #11 ──────────────────────────────────────────────
+MIN_BASELINE_PASSAGES = 3   # critère exploitabilité (décision 14/05)
+MIN_SAMPLES_PER_PASSAGE = 5
+
+rows = []
+signals_cache = {}  # pour plots futurs
+
+for (code, cond), data in TRIALS.items():
+    tau, m = TDE_PARAMS[code]
+
+    # Signaux de résilience
+    signals = compute_resilience_signals(data['signal_z'], tau=tau, m=m)
+    signals_cache[(code, cond)] = signals
+    t = signals['time']
+
+    # --- Métriques DANS le bac (perturbation) ---
+    pert_mask = (t >= data['pert_entry']) & (t <= data['pert_exit'])
+    if pert_mask.sum() < MIN_SAMPLES_PER_PASSAGE:
+        print(f"  ⚠️  {code}/{cond} : pert trop courte ({pert_mask.sum()} samples)")
+        continue
+
+    pert_var      = float(np.nanmean(signals['sig_var'][pert_mask]))
+    pert_radius   = float(np.nanmean(signals['sig_radius'][pert_mask]))
+    pert_cadence  = float(np.nanmean(signals['sig_cadence'][pert_mask]))
+
+    # --- Baseline sur les autres passages ---
+    if len(data['baseline_passages']) < MIN_BASELINE_PASSAGES:
+        print(f"  ⚠️  {code}/{cond} : seulement {len(data['baseline_passages'])} passages baseline (<3) → NaN")
+        rows.append({
+            'participant': code, 'condition': cond,
+            'n_baseline_passages': len(data['baseline_passages']),
+            'pert_duration_s': round(data['pert_exit'] - data['pert_entry'], 2),
+            **{k: np.nan for k in ['pert_var', 'pert_radius', 'pert_cadence',
+                                     'baseline_var', 'baseline_radius', 'baseline_cadence',
+                                     'z_var', 'z_radius', 'ratio_var', 'ratio_radius',
+                                     'delta_cadence_hz']},
+        })
+        continue
+
+    bvars, bradii, bcads = [], [], []
+    for (e, x) in data['baseline_passages']:
+        msk = (t >= e) & (t <= x)
+        if msk.sum() < MIN_SAMPLES_PER_PASSAGE:
+            continue
+        bvars.append(float(np.nanmean(signals['sig_var'][msk])))
+        bradii.append(float(np.nanmean(signals['sig_radius'][msk])))
+        bcads.append(float(np.nanmean(signals['sig_cadence'][msk])))
+
+    if len(bvars) < MIN_BASELINE_PASSAGES:
+        print(f"  ⚠️  {code}/{cond} : seulement {len(bvars)} passages baseline exploitables → NaN")
+        continue
+
+    baseline_var      = float(np.median(bvars))
+    baseline_radius   = float(np.median(bradii))
+    baseline_cadence  = float(np.median(bcads))
+    std_var           = float(np.std(bvars))
+    std_radius        = float(np.std(bradii))
+
+    rows.append({
+        'participant':         code,
+        'condition':           cond,
+        'n_baseline_passages': len(bvars),
+        'pert_duration_s':     round(data['pert_exit'] - data['pert_entry'], 2),
+        'pert_var':            round(pert_var, 2),
+        'pert_radius':         round(pert_radius, 2),
+        'pert_cadence':        round(pert_cadence, 3),
+        'baseline_var':        round(baseline_var, 2),
+        'baseline_radius':     round(baseline_radius, 2),
+        'baseline_cadence':    round(baseline_cadence, 3),
+        'z_var':               round((pert_var - baseline_var)    / (std_var + 1e-6), 2),
+        'z_radius':            round((pert_radius - baseline_radius) / (std_radius + 1e-6), 2),
+        'ratio_var':           round(pert_var    / (baseline_var + 1e-6), 2),
+        'ratio_radius':        round(pert_radius / (baseline_radius + 1e-6), 2),
+        'delta_cadence_hz':    round(pert_cadence - baseline_cadence, 3),
+    })
+
+df_res = pd.DataFrame(rows)
+print(f"\n✅ {len(df_res)} essais analysés")
+df_res
+└── OUTPUT ─────────────────────────────────
+⚠️  001CrMa/silence : seulement 0 passages baseline (<3) → NaN
+  ⚠️  001CrMa/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  001CrMa/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  002CrPa/silence : seulement 0 passages baseline (<3) → NaN
+  ⚠️  002CrPa/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  002CrPa/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  003BrLu/silence : seulement 0 passages baseline (<3) → NaN
+  ⚠️  003BrLu/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  003BrLu/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  004CaGe/silence : seulement 0 passages baseline (<3) → NaN
+  ⚠️  004CaGe/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  004CaGe/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  005DeJe/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  005DeJe/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  006MoCa/silence : seulement 0 passages baseline (<3) → NaN
+  ⚠️  006MoCa/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  006MoCa/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  007MoMa/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  008RiMo/silence : seulement 0 passages baseline (<3) → NaN
+  ⚠️  008RiMo/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  009DeFr/silence : seulement 0 passages baseline (<3) → NaN
+  ⚠️  009DeFr/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  009DeFr/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  010DeYv/silence : seulement 0 passages baseline (<3) → NaN
+  ⚠️  010DeYv/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  010DeYv/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  011RiJo/silence : seulement 0 passages baseline (<3) → NaN
+  ⚠️  011RiJo/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  011RiJo/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  012WaCh/silence : seulement 1 passages baseline (<3) → NaN
+  ⚠️  012WaCh/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  012WaCh/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  013WaJe/silence : seulement 0 passages baseline (<3) → NaN
+  ⚠️  013WaJe/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  013WaJe/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+  ⚠️  014DeAn/silence : seulement 0 passages baseline (<3) → NaN
+  ⚠️  014DeAn/tempo_random : seulement 0 passages baseline (<3) → NaN
+  ⚠️  014DeAn/beatmove_adaptatif : seulement 0 passages baseline (<3) → NaN
+
+✅ 38 essais analysés
+└── OUTPUT ─────────────────────────────────
+participant           condition  n_baseline_passages  pert_duration_s  pert_var  pert_radius  pert_cadence  baseline_var  baseline_radius  baseline_cadence  z_var  z_radius  ratio_var  \
+0      001CrMa             silence                    0             4.86       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+1      001CrMa        tempo_random                    0             4.35       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+2      001CrMa  beatmove_adaptatif                    0             4.18       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+3      002CrPa             silence                    0             4.96       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+4      002CrPa  beatmove_adaptatif                    0             4.93       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+5      002CrPa        tempo_random                    0             4.95       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+6      003BrLu             silence                    0             3.97       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+7      003BrLu        tempo_random                    0             3.84       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+8      003BrLu  beatmove_adaptatif                    0             3.91       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+9      004CaGe             silence                    0             3.93       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+10     004CaGe        tempo_random                    0             4.05       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+11     004CaGe  beatmove_adaptatif                    0             4.07       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+12     005DeJe        tempo_random                    0             3.51       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+13     005DeJe  beatmove_adaptatif                    0             3.41       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+14     006MoCa             silence                    0             4.04       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+15     006MoCa        tempo_random                    0             3.44       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+16     006MoCa  beatmove_adaptatif                    0             3.91       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+17     007MoMa        tempo_random                    0             4.12       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+18     008RiMo             silence                    0             3.89       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+19     008RiMo  beatmove_adaptatif                    0             3.95       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+20     009DeFr             silence                    0             3.55       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+21     009DeFr        tempo_random                    0             3.43       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+22     009DeFr  beatmove_adaptatif                    0             3.75       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+23     010DeYv             silence                    0             2.95       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+24     010DeYv        tempo_random                    0             3.15       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+25     010DeYv  beatmove_adaptatif                    0             3.11       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+26     011RiJo             silence                    0             5.06       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+27     011RiJo        tempo_random                    0             4.23       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+28     011RiJo  beatmove_adaptatif                    0             4.28       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+29     012WaCh             silence                    1             4.02       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+30     012WaCh        tempo_random                    0             3.99       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+31     012WaCh  beatmove_adaptatif                    0             4.30       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+32     013WaJe             silence                    0             4.60       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+33     013WaJe        tempo_random                    0             4.60       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+34     013WaJe  beatmove_adaptatif                    0             4.35       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+35     014DeAn             silence                    0             3.83       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+36     014DeAn        tempo_random                    0             3.68       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+37     014DeAn  beatmove_adaptatif                    0             3.53       NaN          NaN           NaN           NaN              NaN               NaN    NaN       NaN        NaN   
+
+    ratio_radius  delta_cadence_hz  
+0            NaN               NaN  
+1            NaN               NaN  
+2            NaN               NaN  
+3            NaN               NaN  
+4            NaN               NaN  
+5            NaN               NaN  
+6            NaN               NaN  
+7            NaN               NaN  
+8            NaN               NaN  
+9            NaN               NaN  
+10           NaN               NaN  
+11           NaN               NaN  
+12           NaN               NaN  
+13           NaN               NaN  
+14           NaN               NaN  
+15           NaN               NaN  
+16           NaN               NaN  
+17           NaN               NaN  
+18           NaN               NaN  
+19           NaN               NaN  
+20           NaN               NaN  
+21           NaN               NaN  
+22           NaN               NaN  
+23           NaN               NaN  
+24           NaN               NaN  
+25           NaN               NaN  
+26           NaN               NaN  
+27           NaN               NaN  
+28           NaN               NaN  
+29           NaN               NaN  
+30           NaN               NaN  
+31           NaN               NaN  
+32           NaN               NaN  
+33           NaN               NaN  
+34           NaN               NaN  
+35           NaN               NaN  
+36           NaN               NaN  
+37           NaN               NaN
+
+┌─ MARKDOWN #12 ──────────────────────────────────────────
+## Stats descriptives par condition
+
+┌─ CODE #13 ──────────────────────────────────────────────
+metric_cols = ['z_var', 'z_radius', 'ratio_var', 'ratio_radius', 'delta_cadence_hz']
+print("Métriques de résilience par condition (médiane ± IQR) :\n")
+for col in metric_cols:
+    print(f"\n--- {col} ---")
+    print(df_res.groupby('condition')[col].describe()[['count', '25%', '50%', '75%']].round(2))
+└── OUTPUT ─────────────────────────────────
+Métriques de résilience par condition (médiane ± IQR) :
+
+
+--- z_var ---
+                    count  25%  50%  75%
+condition                               
+beatmove_adaptatif    0.0  NaN  NaN  NaN
+silence               0.0  NaN  NaN  NaN
+tempo_random          0.0  NaN  NaN  NaN
+
+--- z_radius ---
+                    count  25%  50%  75%
+condition                               
+beatmove_adaptatif    0.0  NaN  NaN  NaN
+silence               0.0  NaN  NaN  NaN
+tempo_random          0.0  NaN  NaN  NaN
+
+--- ratio_var ---
+                    count  25%  50%  75%
+condition                               
+beatmove_adaptatif    0.0  NaN  NaN  NaN
+silence               0.0  NaN  NaN  NaN
+tempo_random          0.0  NaN  NaN  NaN
+
+--- ratio_radius ---
+                    count  25%  50%  75%
+condition                               
+beatmove_adaptatif    0.0  NaN  NaN  NaN
+silence               0.0  NaN  NaN  NaN
+tempo_random          0.0  NaN  NaN  NaN
+
+--- delta_cadence_hz ---
+                    count  25%  50%  75%
+condition                               
+beatmove_adaptatif    0.0  NaN  NaN  NaN
+silence               0.0  NaN  NaN  NaN
+tempo_random          0.0  NaN  NaN  NaN
+
+┌─ MARKDOWN #14 ──────────────────────────────────────────
+## Plots résilience par condition
+
+┌─ CODE #15 ──────────────────────────────────────────────
+COND_ORDER = ['silence', 'tempo_random', 'beatmove_adaptatif']
+COND_COLORS = {
+    'silence':            'steelblue',
+    'tempo_random':       'darkorange',
+    'beatmove_adaptatif': 'forestgreen',
+}
+
+fig, axes = plt.subplots(1, 5, figsize=(20, 5))
+
+metrics_info = [
+    ('z_var',            'Z-score variance',  0),
+    ('z_radius',         'Z-score radius',    0),
+    ('ratio_var',        'Ratio var pert/baseline', 1),
+    ('ratio_radius',     'Ratio radius pert/baseline', 1),
+    ('delta_cadence_hz', 'Δ cadence (Hz)',    0),
+]
+
+for ax, (metric, label, ref_line) in zip(axes, metrics_info):
+    # Boxplot par condition
+    data_by_cond = [df_res[df_res['condition'] == c][metric].dropna().values
+                     for c in COND_ORDER]
+    bp = ax.boxplot(data_by_cond, labels=[c[:3] for c in COND_ORDER],
+                     patch_artist=True, widths=0.5)
+    for patch, c in zip(bp['boxes'], COND_ORDER):
+        patch.set_facecolor(COND_COLORS[c])
+        patch.set_alpha(0.4)
+
+    # Scatter individuel par participant
+    for i, c in enumerate(COND_ORDER):
+        sub = df_res[df_res['condition'] == c]
+        x = np.random.normal(i+1, 0.05, len(sub))
+        ax.scatter(x, sub[metric], s=30, alpha=0.7,
+                    color=COND_COLORS[c], edgecolors='black', linewidths=0.5)
+
+    ax.axhline(ref_line, color='gray', linestyle='--', linewidth=0.8, alpha=0.6)
+    ax.set_title(label, fontsize=11, fontweight='bold')
+    ax.set_ylabel(label, fontsize=10)
+    ax.grid(alpha=0.3)
+
+plt.suptitle(f'Métriques de résilience par condition (N={df_res["participant"].nunique()} participants, {len(df_res)} essais)',
+              fontweight='bold', fontsize=12, y=1.02)
+plt.tight_layout()
+plt.savefig('05_metrics_by_condition.png', dpi=80, bbox_inches='tight')
+plt.show()
+└── OUTPUT ─────────────────────────────────
+C:\Users\etulyon1\AppData\Local\Temp\ipykernel_2236\3982222688.py:22: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
+  bp = ax.boxplot(data_by_cond, labels=[c[:3] for c in COND_ORDER],
+C:\Users\etulyon1\AppData\Local\Temp\ipykernel_2236\3982222688.py:22: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
+  bp = ax.boxplot(data_by_cond, labels=[c[:3] for c in COND_ORDER],
+C:\Users\etulyon1\AppData\Local\Temp\ipykernel_2236\3982222688.py:22: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
+  bp = ax.boxplot(data_by_cond, labels=[c[:3] for c in COND_ORDER],
+C:\Users\etulyon1\AppData\Local\Temp\ipykernel_2236\3982222688.py:22: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
+  bp = ax.boxplot(data_by_cond, labels=[c[:3] for c in COND_ORDER],
+C:\Users\etulyon1\AppData\Local\Temp\ipykernel_2236\3982222688.py:22: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
+  bp = ax.boxplot(data_by_cond, labels=[c[:3] for c in COND_ORDER],
+└── OUTPUT ─────────────────────────────────
+<Figure size 2000x500 with 5 Axes>
+└── [Image PNG — non affiché en .txt]
+
+┌─ MARKDOWN #16 ──────────────────────────────────────────
+## Tendances individuelles (lignes par participant)
+
+Permet de voir si chaque participant suit une même tendance ou si la réponse est hétérogène.
+
+┌─ CODE #17 ──────────────────────────────────────────────
+fig, axes = plt.subplots(1, 5, figsize=(20, 5))
+
+for ax, (metric, label, ref_line) in zip(axes, metrics_info):
+    # Pivoter : 1 ligne par participant, 1 col par condition
+    pivot = df_res.pivot(index='participant', columns='condition', values=metric)
+    pivot = pivot[COND_ORDER]
+
+    for code in pivot.index:
+        vals = pivot.loc[code].values
+        ax.plot(range(len(COND_ORDER)), vals, '-o', alpha=0.5, linewidth=1, markersize=4)
+        ax.annotate(code[:3], (len(COND_ORDER)-1, vals[-1]),
+                     fontsize=6, alpha=0.7, xytext=(2, 0), textcoords='offset points')
+
+    # Médiane par condition
+    med = pivot.median()
+    ax.plot(range(len(COND_ORDER)), med.values, 'k-o', linewidth=2.5,
+             markersize=8, label='médiane', zorder=5)
+
+    ax.axhline(ref_line, color='gray', linestyle='--', linewidth=0.8, alpha=0.6)
+    ax.set_xticks(range(len(COND_ORDER)))
+    ax.set_xticklabels([c[:3] for c in COND_ORDER])
+    ax.set_title(label, fontsize=11, fontweight='bold')
+    ax.set_ylabel(label, fontsize=10)
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+
+plt.suptitle('Trajectoires individuelles (1 ligne = 1 participant)', fontweight='bold', y=1.02)
+plt.tight_layout()
+plt.savefig('05_individual_trajectories.png', dpi=80, bbox_inches='tight')
+plt.show()
+└── OUTPUT ─────────────────────────────────
+<Figure size 2000x500 with 5 Axes>
+└── [Image PNG — non affiché en .txt]
+
+┌─ MARKDOWN #18 ──────────────────────────────────────────
+## Export pour notebook 06 (stats inter-conditions)
+
+┌─ CODE #19 ──────────────────────────────────────────────
+out_dir = Path(paths.OUTPUTS_DIR) / 'tables'
+out_dir.mkdir(parents=True, exist_ok=True)
+df_res.to_csv(out_dir / '05_resilience_metrics.csv', index=False)
+print(f"✅ Export : {out_dir / '05_resilience_metrics.csv'}")
+print(f"   {len(df_res)} essais, {df_res['participant'].nunique()} participants")
+print(f"   {df_res[metric_cols].notna().all(axis=1).sum()} essais avec toutes les métriques valides")
+└── OUTPUT ─────────────────────────────────
+✅ Export : C:\Users\etulyon1\Desktop\MASTER_IEAP\INTERNSHIP\Stage_M1_2026\outputs\tables\05_resilience_metrics.csv
+   38 essais, 14 participants
+   0 essais avec toutes les métriques valides
+
+┌─ MARKDOWN #20 ──────────────────────────────────────────
+## Synthèse
+
+À commenter après exécution :
+
+| Métrique | Silence | Tempo random | Beatmove | Tendance |
+|---|---|---|---|---|
+| z_var (médiane) | ... | ... | ... | ... |
+| z_radius (médiane) | ... | ... | ... | ... |
+| ratio_var (médiane) | ... | ... | ... | ... |
+| Δ cadence Hz (médiane) | ... | ... | ... | ... |
+
+**Hypothèse attendue** : beatmove_adaptatif réduit z_var/z_radius par rapport à silence (meilleure résilience).
+
+Prochaine étape → **Notebook 06 : Stats inter-conditions** (Friedman + Wilcoxon apparié sur les 5 métriques).
+
+========================================================================
+  FIN DE L'EXPORT
+========================================================================

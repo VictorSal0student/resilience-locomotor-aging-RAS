@@ -1,0 +1,16 @@
+metric,condition,N,median,iqr,mean,sd
+z_var,silence,8,3.82,3.565,5.549,3.91
+z_var,tempo_random,8,9.425,6.75,8.618,4.559
+z_var,beatmove_adaptatif,8,5.795,3.33,6.552,3.032
+z_radius,silence,8,3.69,3.175,4.886,2.858
+z_radius,tempo_random,8,5.275,2.907,5.574,2.574
+z_radius,beatmove_adaptatif,8,4.785,2.65,5.83,2.91
+ratio_var,silence,8,1.455,0.27,1.636,0.437
+ratio_var,tempo_random,8,1.88,0.475,2.016,0.396
+ratio_var,beatmove_adaptatif,8,1.535,0.585,1.771,0.465
+ratio_radius,silence,8,1.24,0.108,1.304,0.172
+ratio_radius,tempo_random,8,1.36,0.28,1.435,0.173
+ratio_radius,beatmove_adaptatif,8,1.27,0.19,1.371,0.267
+delta_cadence_hz,silence,8,0.0,0.153,-0.142,0.31
+delta_cadence_hz,tempo_random,8,-0.016,0.236,-0.077,0.149
+delta_cadence_hz,beatmove_adaptatif,8,-0.065,0.193,-0.134,0.176
