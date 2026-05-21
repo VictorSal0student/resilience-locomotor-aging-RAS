@@ -11,7 +11,7 @@ data/beatmove/
 data/external/
 
 # Outputs
-outputs/
+outputs/reports/
 
 # Python
 __pycache__/

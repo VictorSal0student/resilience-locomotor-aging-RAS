@@ -1,0 +1,13 @@
+metric,n,chi2,df,p,kendall_W,sig
+lag_time_s,15,5.02,2,0.0813,0.167,.
+peak_time_s,14,7,2,0.0302,0.25,*
+recovery_time_s,13,0.51,2,0.775,0.02,ns
+peak_distance_mm,14,1.71,2,0.4244,0.061,ns
+n_steps_recovery,13,0.17,2,0.92,0.006,ns
+persistent_diff_15s,15,2.8,2,0.2466,0.093,ns
+persistent_diff_30s,15,2.8,2,0.2466,0.093,ns
+persistent_diff_45s,15,6.53,2,0.0381,0.218,*
+persistent_diff_60s,15,1.73,2,0.4204,0.058,ns
+pct_T1,15,0.13,2,0.9355,0.004,ns
+pct_T2,15,0.53,2,0.7659,0.018,ns
+pct_T3,15,1.05,2,0.5913,0.035,ns

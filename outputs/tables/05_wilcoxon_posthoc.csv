@@ -1,0 +1,16 @@
+metric,pair,N,statistic,p_uncorrected,p_holm,sig_holm,p_bonf,sig_bonf,r,magnitude
+z_var,sil vs tem,15,33,0.135,0.363,ns,0.405,ns,0.396,moderate
+z_var,sil vs bea,15,55,0.804,0.804,ns,1,ns,0.073,small
+z_var,tem vs bea,15,88,0.121,0.363,ns,0.363,ns,0.411,moderate
+z_radius,sil vs tem,15,34,0.151,0.453,ns,0.453,ns,0.381,moderate
+z_radius,sil vs bea,15,55,0.804,0.804,ns,1,ns,0.073,small
+z_radius,tem vs bea,15,85,0.169,0.453,ns,0.507,ns,0.367,moderate
+ratio_var,sil vs tem,15,23,0.035,0.106,ns,0.106,ns,0.543,large
+ratio_var,sil vs bea,15,49.5,0.57,0.57,ns,1,ns,0.154,small
+ratio_var,tem vs bea,15,82,0.069,0.137,ns,0.206,ns,0.477,moderate
+ratio_radius,sil vs tem,15,17,0.028,0.083,ns,0.083,ns,0.58,large
+ratio_radius,sil vs bea,15,61,0.977,0.977,ns,1,ns,0.015,small
+ratio_radius,tem vs bea,15,97.5,0.035,0.083,ns,0.106,ns,0.55,large
+delta_cadence_hz,sil vs tem,14,63,0.235,0.705,ns,0.705,ns,0.336,moderate
+delta_cadence_hz,sil vs bea,14,52,0.675,1,ns,1,ns,0.118,small
+delta_cadence_hz,tem vs bea,14,39,0.675,1,ns,1,ns,0.134,small
