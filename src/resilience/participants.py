@@ -123,9 +123,8 @@ PARTICIPANTS: dict[str, Participant] = {
         code="005DeJe",
         date="2026-05-07",
         trials={
-            # EXCLUDE — sporadic artefacts 180-230s contaminate pre-CRF baseline
-            "silence":            Trial(excluded=True,
-                                          note="EXCLUDE: artefacts 180-230s, pre-CRF baseline not recoverable"),
+            "silence":            Trial(crop_end_s=375,
+                                          note="Recovered via cluster fill (V2, 17/05/2026); crop_end_s=375 removes final aberrant plateau. CRF not annotated."),
             "tempo_random":       Trial(crf_entry_s=248.51, crf_exit_s=251.89,
                                           crop_start_s=80, crop_end_s=440),
             "beatmove_adaptatif": Trial(crf_entry_s=251, crf_exit_s=254.26,
@@ -153,12 +152,12 @@ PARTICIPANTS: dict[str, Participant] = {
         trials={
             "silence":            Trial(crf_entry_s=270, crf_exit_s=273.56,
                                           excluded=True,
-                                          note="EXCLUDE: broken back markers, Codamotion Odin bug"),
+                                          note="EXCLUDE: broken back markers, cluster fill FOPT=28mm (non-rigid), amplitude 180mm, f_dom 0.75Hz. V2 confirms exclusion."),
             "tempo_random":       Trial(crf_entry_s=243, crf_exit_s=247.5,
                                           crop_end_s=374),
             "beatmove_adaptatif": Trial(crf_entry_s=240, crf_exit_s=243,
                                           excluded=True,
-                                          note="EXCLUDE: signal globally degraded across the whole trial"),
+                                          note="EXCLUDE: amplitude 213mm, f_dom 0.75Hz (not walking). V2 confirms exclusion."),
         },
     ),
 
@@ -169,8 +168,7 @@ PARTICIPANTS: dict[str, Participant] = {
             # silence: crop_start raised from 45 to 60 (minimum 60s rule applied)
             "silence":            Trial(crf_entry_s=237.35, crf_exit_s=241.09, n_pas=6, pied="G"),
             "tempo_random":       Trial(crf_entry_s=235.59, crf_exit_s=238.87, n_pas=6, pied="G",
-                                          excluded=True,
-                                          note="EXCLUDED: broken back markers, ~30 dense spikes, deep IMF contamination"),
+                                          note="Recovered via cluster fill (V2, 17/05/2026): 5.0% → 1.7% occluded, FOPT=1.13mm, 2780 marker spikes corrected."),
             "beatmove_adaptatif": Trial(crf_entry_s=241.44, crf_exit_s=245.12, n_pas=6, pied="G",
                                           crop_start_s=63, crop_end_s=324,
                                           note="WATCH: artefacts after 324s"),
@@ -240,6 +238,28 @@ PARTICIPANTS: dict[str, Participant] = {
             "silence":            Trial(crf_entry_s=255.88, crf_exit_s=259.44),
             "tempo_random":       Trial(crf_entry_s=239.61, crf_exit_s=242.87),
             "beatmove_adaptatif": Trial(crf_entry_s=285.18, crf_exit_s=288.39),
+        },
+    ),
+
+    "015LaOd": Participant(
+        code="015LaOd",
+        date="2026-05-18",
+        trials={
+            "silence":            Trial(crf_entry_s=245.72, crf_exit_s=248.92, n_pas=6, pied="G"),
+            "tempo_random":       Trial(crf_entry_s=252.15, crf_exit_s=255.97, n_pas=7, pied="G",
+                                          note="participant stopped walking before sand entry (CRF still valid)"),
+            "beatmove_adaptatif": Trial(crf_entry_s=241.76, crf_exit_s=245.02, n_pas=6, pied="G"),
+        },
+    ),
+
+    "016LeSi": Participant(
+        code="016LeSi",
+        date="2026-05-18",
+        trials={
+            "silence":            Trial(crf_entry_s=242.74, crf_exit_s=247.89, n_pas=7, pied="G",
+                                          note="beatMove 'silence' config failed → ran 'random' with audio muted (effectively silence)"),
+            "tempo_random":       Trial(crf_entry_s=244.67, crf_exit_s=249.43, n_pas=7, pied="D"),
+            "beatmove_adaptatif": Trial(crf_entry_s=241.80, crf_exit_s=247.21, n_pas=8, pied="D"),
         },
     ),
 

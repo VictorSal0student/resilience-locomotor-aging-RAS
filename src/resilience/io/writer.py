@@ -21,9 +21,7 @@ def save_processed(participant: str, condition: str, preprocess_out: dict,
     Parameters
     ----------
     participant : str
-        Participant code (e.g. '003BrLu').
     condition : str
-        Condition name (e.g. 'silence', 'tempo_random', 'beatmove_adaptatif').
     preprocess_out : dict
         Output of processing.preprocess.run().
     trajectories_raw : dict, optional
@@ -40,23 +38,27 @@ def save_processed(participant: str, condition: str, preprocess_out: dict,
 
     payload = {
         # Core preprocessed signals
-        "sacrum_xyz_raw":   preprocess_out["sacrum_xyz_raw"],
-        "sacrum_axis_raw":  preprocess_out["sacrum_axis_raw"],
-        "sacrum_despiked":  preprocess_out["sacrum_despiked"],
-        "sacrum_emd":       preprocess_out["sacrum_emd"],
-        "sacrum_filt":      preprocess_out["sacrum_filt"],
-        "signal_final":     preprocess_out["signal_final"],
-        "time_final":       preprocess_out["time_final"],
+        "sacrum_xyz_raw":        preprocess_out["sacrum_xyz_raw"],
+        "sacrum_axis_raw":       preprocess_out["sacrum_axis_raw"],
+        "sacrum_despiked":       preprocess_out["sacrum_despiked"],
+        "sacrum_emd":            preprocess_out["sacrum_emd"],
+        "sacrum_filt":           preprocess_out["sacrum_filt"],
+        "signal_final":          preprocess_out["signal_final"],
+        "time_final":            preprocess_out["time_final"],
         # Metadata
-        "fs_final":         preprocess_out["fs_final"],
-        "axis":             preprocess_out["axis"],
-        "emd_applied":      preprocess_out["emd_applied"],
-        "despike_applied":  preprocess_out["despike_applied"],
-        # Despike diagnostics (stored as object dtype, unpacked via .item())
-        "despike_stats":    np.array(preprocess_out["despike_stats"], dtype=object),
+        "fs_final":              preprocess_out["fs_final"],
+        "axis":                  preprocess_out["axis"],
+        "emd_applied":           preprocess_out["emd_applied"],
+        "despike_applied":       preprocess_out["despike_applied"],
+        "cluster_fill_applied":  preprocess_out["cluster_fill_applied"],
+        "makima_applied":        preprocess_out["makima_applied"],
+        # Diagnostics (dicts wrapped as object arrays, unpack via .item())
+        "despike_stats":         np.array(preprocess_out["despike_stats"],     dtype=object),
+        "cluster_fill_stats":    np.array(preprocess_out["cluster_fill_stats"], dtype=object),
+        "makima_stats":          np.array(preprocess_out["makima_stats"],       dtype=object),
         # Trial identifiers
-        "participant":      participant,
-        "condition":        condition,
+        "participant":           participant,
+        "condition":             condition,
     }
 
     # Optional raw back markers (Dos01-04) for downstream sand detection
@@ -72,16 +74,6 @@ def save_processed(participant: str, condition: str, preprocess_out: dict,
 def load_processed(participant: str, condition: str) -> dict:
     """
     Load a preprocessed .npz file and return a dict of arrays.
-
-    Parameters
-    ----------
-    participant : str
-    condition : str
-
-    Returns
-    -------
-    dict
-        All arrays stored in the .npz file, keyed by name.
 
     Raises
     ------

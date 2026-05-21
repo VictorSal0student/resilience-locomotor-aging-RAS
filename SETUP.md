@@ -3,7 +3,7 @@
 ## Requirements
 
 - Python ≥ 3.11
-- R ≥ 4.2 (for `scripts/stats.R` only)
+- R ≥ 4.2 (for `scripts/stats.R` and `scripts/stats_dynamics.R`)
 - Conda recommended for the Python environment
 
 ## Python environment
@@ -44,13 +44,15 @@ RAW_DIR/{participant_code}/{participant_code}_{NN}_{condition}.mat
 
 Example: `RAW_DIR/001CrMa/001CrMa_01_silence.mat`.
 
-## R environment (for `stats.R`)
+## R environment (for `stats.R` and `stats_dynamics.R`)
 
 From an R session:
 
 ```r
-install.packages(c("tidyverse", "rstatix", "ggpubr", "here", "coin"))
+install.packages(c("tidyverse", "rstatix", "ggpubr", "here", "coin", "purrr"))
 ```
+
+Note: `purrr` must be loaded explicitly (`library(purrr)`) in the scripts — it is not auto-loaded by `tidyverse` in all environments.
 
 ## Verify the install
 
@@ -69,4 +71,7 @@ jupyter lab notebooks/
 
 # Run R stats (after notebook 04)
 Rscript scripts/stats.R
+
+# Run R stats dynamics (after notebook 04b)
+Rscript scripts/stats_dynamics.R
 ```

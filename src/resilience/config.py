@@ -4,16 +4,19 @@ config.py — Scientific constants of the project.
 ⚠️  THIS FILE CONTAINS NO DISK PATHS.
     Paths live in paths.py (which reads .env).
 
-Contains:
-    - CODAMOTION parameters (sampling rate, duration, markers)
-    - Pipeline parameters (filters, EMD, TDE, detection)
-    - Experimental conditions and beatMove codes
-    - Sand bed coordinates (measured 07/05/2026)
+Contents
+--------
+- CODAMOTION acquisition parameters (sampling rate, trial duration, markers)
+- Experimental conditions and beatMove configuration codes
+- Preprocessing parameters (EMD walking-band selection, Butterworth, decimation)
+- Time-Delay Embedding (TDE) parameters
+- Sand bed and baseline zone coordinates (BBOX detection)
+- Resilience dynamics parameters (Antoine Dufourneau method, adapted)
 """
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# CODAMOTION PARAMETERS
+# CODAMOTION ACQUISITION
 # ════════════════════════════════════════════════════════════════════════════
 
 FS_RAW   = 400              # Hz, CODAMOTION acquisition rate
@@ -21,7 +24,6 @@ FS_CLEAN = 100              # Hz, after decimation
 
 SESSION_DURATION_S = 480    # 8 minutes per trial
 TRIM_START_S       = 60     # first minute systematically dropped
-                            # (beatMove setup + phone in pocket)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -43,8 +45,6 @@ ALL_MARKERS = [m for group in MARKERS.values() for m in group]
 
 CONDITIONS = ["silence", "tempo_random", "beatmove_adaptatif"]
 
-# beatMove codes (app config) → condition.
-# See recap_marqueurs: 22/178/1195=silence, 23/888/9999=adaptatif, 22/180/2220=random
 BEATMOVE_CODE_TO_CONDITION = {
     "1195": "silence",
     "2220": "tempo_random",
@@ -55,23 +55,9 @@ BEATMOVE_CODE_TO_CONDITION = {
 # ════════════════════════════════════════════════════════════════════════════
 # PREPROCESSING — EMD
 # ════════════════════════════════════════════════════════════════════════════
-#
-# IMF selection strategy for walking signal reconstruction:
-#
-# 1. AUTO method (default): selects IMFs whose central frequency
-#    (FFT/Welch dominant peak) falls within WALKING_BAND_HZ.
-#    Adaptive per trial, justified by the cadence/stride observed in 65+
-#    (Tudor-Locke et al., 2009; CADENCE-Adults 2021).
-#
-# 2. HEURISTIC method (fallback): fixed indices (EMD_IMF_INDICES).
-#    Used if auto selection returns 0 IMF (pathological case).
-#
-# Band [0.5–2.5 Hz]:
-#   - 0.5 Hz: stride cycle (2 steps) for slow walkers
-#   - 2.5 Hz: margin above max observed cadence in fast 65+ walkers
 
-WALKING_BAND_HZ      = (0.5, 2.5)                    # auto IMF selection band
-EMD_IMF_INDICES      = (3, 4, 5, 6, 7, 8)            # heuristic fallback (Antoine's choice)
+WALKING_BAND_HZ = (0.5, 2.5)
+EMD_IMF_INDICES = (3, 4, 5, 6, 7, 8)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -80,61 +66,84 @@ EMD_IMF_INDICES      = (3, 4, 5, 6, 7, 8)            # heuristic fallback (Antoi
 
 BUTTER_CUTOFF_HZ = 5.0
 BUTTER_ORDER     = 4
+DECIMATE_FACTOR  = 4
 
-DECIMATE_FACTOR = 4         # 400 Hz / 4 = 100 Hz
-
-# Default source in the .mat file
-DEFAULT_SOURCE = "Marker"   # 'Marker' (raw) or 'MFilter' (Odin-filtered, not recommended)
+DEFAULT_SOURCE = "Marker"
 DEFAULT_AXIS   = "Z"
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# TDE
+# TIME-DELAY EMBEDDING (TDE)
 # ════════════════════════════════════════════════════════════════════════════
 
 TDE_MAX_LAG       = 100
 TDE_MAX_DIM       = 10
-TDE_FNN_THRESHOLD = 1.0      # %
-TDE_FNN_R         = 15.0     # ratio Kennel et al. 1992
+TDE_FNN_THRESHOLD = 1.0
+TDE_FNN_R         = 15.0
 TDE_VIZ_DIM       = 3
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# SAND DETECTION — PCA METHOD (legacy)
+# BBOX DETECTION
 # ════════════════════════════════════════════════════════════════════════════
 
-DETECT_PCA_PERCENTILE_LOW   = 5
-DETECT_PCA_PERCENTILE_HIGH  = 95
-DETECT_PCA_MARGIN_S_MM      = 200
-DETECT_PCA_MARGIN_D_MM      = 200
-DETECT_MIN_DURATION_S       = 1.5
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# SAND DETECTION — ABSOLUTE COORDINATES (07/05/2026)
-# ════════════════════════════════════════════════════════════════════════════
-#
-# Sand bed corners in CODAMOTION coordinates (mm), measured directly on
-# 07/05/2026 with 4 markers (Marker04 to Marker10).
-#
-# Convention:
-#   A = front-left   (left exit)
-#   B = front-right  (right exit)
-#   C = rear-right   (right entry)
-#   D = rear-left    (left entry)
-#
-# Sanity check:
-#   A-D ≈ 4413 mm  |  B-C ≈ 4423 mm  (measured length 4.4 m)
-#   A-B ≈ 1006 mm  |  C-D ≈ 1012 mm  (width ~1.0 m)
-#   Diagonals A-C and B-D nearly equal → rectangle.
+DETECT_MIN_DURATION_S = 1.5
 
 BAC_SAND_CORNERS_MM = {
-    'A': (1070.7,   978.9),    # front-left
-    'B': ( 283.9,  1606.6),    # front-right
-    'C': (-2452.0, -1869.2),   # rear-right
-    'D': (-1654.5, -2492.2),   # rear-left
+    'A': ( 1070.7,   978.9),
+    'B': (  283.9,  1606.6),
+    'C': (-2452.0, -1869.2),
+    'D': (-1654.5, -2492.2),
 }
-
-# Tolerance margin around the rectangle (the sacrum is not exactly above
-# the centre of the bed but slightly above ground level).
 BAC_SAND_MARGIN_MM = 100
+
+BAC_BASELINE_LEFT_CORNERS_MM = {
+    'A': ( 1849.7,   354.1),
+    'B': ( 1068.0,   977.7),
+    'C': (-1657.2, -2493.4),
+    'D': ( -875.5, -3117.0),
+}
+BAC_BASELINE_LEFT_MARGIN_MM = 0
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# RESILIENCE DYNAMICS (Antoine Dufourneau MATLAB port, adapted)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Method (notebook 04b): port of the original MATLAB pipeline.
+#
+# Reference trajectory: pre-perturbation phase-space trajectory smoothed
+# by Fourier expansion (order 8) on 360° phase angles.
+#
+# Stability zones (ellipsoid σ): T1 (1σ, "very stable"), T2 (2σ, "stable"),
+# T3 (3σ, "unstable"), beyond T3 ("very unstable"). Scaling factor calibrated
+# on pre-perturbation distance distribution (97.5% quantile).
+#
+# Resilience metrics per trial:
+#   T_L (lag time)      : t_entry → first significant deviation
+#                          (10 consecutive samples in T3 or >T3)
+#   T_P (peak time)     : lag → peak XR_distances within
+#                          [pert_entry, pert_exit + POST_PEAK_BUFFER_S]
+#   T_S (recovery time) : peak → stable return, search starts at pert_exit
+#                          (10 consecutive heel-strikes in T1/T2, tol 5 NaN)
+#   P (persistent)      : mean post-recovery vs pre-perturbation
+#                          (4 windows: 15, 30, 45, 60 s)
+
+RESILIENCE_THRESHOLD_DETREND_MM = 0.01
+RESILIENCE_FOURIER_ORDER        = 8
+RESILIENCE_RESOLUTION_PHASE     = 360
+RESILIENCE_GAUSS_SMOOTH_WIN     = 30
+RESILIENCE_QUANTILE_BASELINE    = 0.975
+
+RESILIENCE_N_STEPS_WINDOW       = 10
+RESILIENCE_N_CONSECUTIVE        = 10
+RESILIENCE_TOLERANCE_NAN        = 5
+
+# Peak search window: [pert_entry, pert_exit + POST_PEAK_BUFFER_S]
+# Adapted from Antoine's single-instant perturbation (5s search window).
+# In our protocol the perturbation lasts ~4s (sand crossing), so the peak
+# can occur anywhere from sand entry to a few seconds after sand exit.
+RESILIENCE_POST_PEAK_BUFFER_S   = 5.0
+RESILIENCE_POST_PEAK_VALID_S    = 7.0    # post-peak validation window
+
+RESILIENCE_PERSISTENT_WINDOWS_S = [15.0, 30.0, 45.0, 60.0]

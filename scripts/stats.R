@@ -5,7 +5,10 @@
 #
 # Design   : within-subject repeated measures (3 conditions per participant)
 # Omnibus  : Friedman test + Kendall's W
-# Post-hoc : pairwise Wilcoxon signed-rank, Bonferroni correction
+# Post-hoc : pairwise Wilcoxon signed-rank
+#            - Bonferroni (conservative, primary)
+#            - Holm-Bonferroni (less conservative, complementary)
+#            - uncorrected p-values + effect sizes also reported
 # Effect   : r = Z / sqrt(N) via rstatix::wilcox_effsize
 # Filter   : per metric, keep only participants with all 3 conditions valid
 #
@@ -105,15 +108,23 @@ wilcoxon_results <- purrr::map_dfr(METRICS, function(metric) {
 
   if (length(complete_p) < 3) return(NULL)
 
-  pw <- d_long %>%
+  pw_bonf <- d_long %>%
     wilcox_test(value ~ condition, paired = TRUE,
                 p.adjust.method = "bonferroni") %>%
+    add_significance("p.adj")
+
+  pw_holm <- d_long %>%
+    wilcox_test(value ~ condition, paired = TRUE,
+                p.adjust.method = "holm") %>%
     add_significance("p.adj")
 
   es <- d_long %>%
     wilcox_effsize(value ~ condition, paired = TRUE)
 
-  pw %>%
+  pw_bonf %>%
+    left_join(pw_holm %>% select(group1, group2,
+                                   p_holm = p.adj, sig_holm = p.adj.signif),
+              by = c("group1", "group2")) %>%
     left_join(es %>% select(group1, group2, effsize, magnitude),
               by = c("group1", "group2")) %>%
     transmute(metric        = metric,
@@ -122,6 +133,8 @@ wilcoxon_results <- purrr::map_dfr(METRICS, function(metric) {
               N             = n1,
               statistic     = round(statistic, 1),
               p_uncorrected = round(p, 4),
+              p_holm        = round(p_holm, 4),
+              sig_holm      = sig_holm,
               p_bonf        = round(p.adj, 4),
               sig_bonf      = p.adj.signif,
               r             = round(effsize, 3),
@@ -187,7 +200,7 @@ make_plot <- function(metric) {
   n <- length(complete_p)
 
   sig_pairs <- wilcoxon_results %>%
-    filter(metric == !!metric, sig_bonf != "ns")
+    filter(metric == !!metric, sig_holm != "ns")
 
   fr_row  <- friedman_results %>% filter(metric == !!metric)
   subtitle <- sprintf("N = %d   |   Friedman chi2 = %.2f, p = %.3f %s   |   W = %.2f",

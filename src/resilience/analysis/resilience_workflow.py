@@ -1,11 +1,24 @@
 """
-resilience_workflow.py — Locomotor resilience pipeline (hybrid bbox + PCA).
+resilience_workflow.py — Locomotor resilience pipeline (BBOX-only).
 
 Method
 ------
-- Perturbation : longest bbox segment (sand bed, precise)
-- Baseline    : other corridor passages detected via PCA-calibrated corridor
-                (excluding any passage that overlaps the perturbation ± 2 s)
+- Perturbation : longest segment in the sand-bed bbox
+                 (config.BAC_SAND_CORNERS_MM, 4.4m × 1m)
+- Baseline    : all passages in the lateral baseline bbox
+                 (config.BAC_BASELINE_LEFT_CORNERS_MM, 4.4m × 1m,
+                  adjacent to the bed on the walker's left side)
+
+Both zones are detected by the same point-in-rectangle test (BBOX), ensuring
+strict geometric comparability between perturbation and baseline.
+
+Time reference
+--------------
+NOTE: in the .npz produced by the preprocess, the raw_Dos arrays are already
+in POST-CROP reference (the first crop_start_s seconds have been removed
+upstream), even though their name suggests otherwise. As a consequence,
+BBOX-derived timestamps (i / FS_RAW) are directly in post-crop reference
+and match time_final without any conversion needed.
 
 Metrics per trial
 -----------------
@@ -33,7 +46,6 @@ from resilience.processing import detection, tde
 # ════════════════════════════════════════════════════════════════════════════
 
 MIN_PASSAGE_S            = 0.5
-PERT_BASELINE_MARGIN_S   = 2.0   # passages within ±2 s of pert entry are excluded
 MIN_BASELINE_PASSAGES    = 3
 MIN_SAMPLES_PER_PASSAGE  = 5
 WELCH_WIN_S              = 1.0
@@ -64,7 +76,7 @@ def compute_resilience_signals(signal_z: np.ndarray, tau: int, m: int,
 
     Returns
     -------
-    dict
+    dict with keys:
         sig_var      : rolling variance (centred, window win_s)
         sig_radius   : phase-space radius (distance to TDE centroid)
         sig_cadence  : local dominant frequency (Hz, non-overlapping Welch)
@@ -76,21 +88,18 @@ def compute_resilience_signals(signal_z: np.ndarray, tau: int, m: int,
     n   = len(signal_z)
     win = int(win_s * fs)
 
-    # Rolling variance
     sig_var = np.zeros(n)
     half = win // 2
     for i in range(n):
         i0, i1 = max(0, i - half), min(n, i + half)
         sig_var[i] = np.var(signal_z[i0:i1])
 
-    # Phase-space radius
     ps       = tde.phase_space_reconstruction(signal_z, tau=tau, dim=m)
     centroid = ps.mean(axis=0)
     radius   = np.linalg.norm(ps - centroid, axis=1)
     pad      = (m - 1) * tau
     sig_radius = np.concatenate([np.full(pad, np.nan), radius])
 
-    # Local cadence (Welch)
     sig_cadence = np.full(n, np.nan)
     step = win
     for i0 in range(0, n - win, step):
@@ -107,11 +116,11 @@ def compute_resilience_signals(signal_z: np.ndarray, tau: int, m: int,
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 3. SACRUM XY HELPER (shared with TDE workflow)
+# 3. SACRUM XY HELPER
 # ════════════════════════════════════════════════════════════════════════════
 
 def _build_sacrum_xy(npz: dict) -> np.ndarray:
-    """Mean of Dos01-04 XY with linear NaN interpolation."""
+    """Mean of Dos01-04 XY (nan-safe) with linear NaN interpolation."""
     dos_xy = np.stack([npz[f'raw_Dos{i:02d}'][:, :2] for i in range(1, 5)], axis=0)
     sacrum_xy = np.nanmean(dos_xy, axis=0)
     for ax in range(2):
@@ -126,106 +135,87 @@ def _build_sacrum_xy(npz: dict) -> np.ndarray:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 4. PCA CALIBRATION + TRIAL LOADING
+# 4. TRIAL LOADING (perturbation + baseline via BBOX)
 # ════════════════════════════════════════════════════════════════════════════
 
-def calibrate_all_participants(verbose: bool = True) -> dict:
-    """Per-participant PCA corridor calibration using CRF annotations."""
-    calibs = {}
-    for code, P in participants.PARTICIPANTS.items():
-        sacrum_dict = {}
-        for cond, trial in P.trials.items():
-            if trial.excluded:
-                continue
-            try:
-                d = writer.load_processed(code, cond)
-            except FileNotFoundError:
-                continue
-            sacrum_dict[cond] = _build_sacrum_xy(d)
-        if not sacrum_dict:
-            continue
-        try:
-            calibs[code] = detection.calibrate_for_participant(sacrum_dict, code)
-        except ValueError as e:
-            if verbose:
-                print(f"  ⚠️  {code}: {e}")
-    if verbose:
-        print(f"  ✅ {len(calibs)} participants PCA-calibrated")
-    return calibs
-
-
-def load_trial_with_passages(code: str, cond: str, pca_calib: dict) -> dict | None:
+def load_trial_with_passages(code: str, cond: str) -> dict | None:
     """
-    Load a trial and detect perturbation (bbox) + baseline passages (PCA).
+    Load a trial and detect:
+        - perturbation: longest segment in sand bbox
+        - baseline passages: all segments in lateral baseline bbox
+
+    All timestamps are in POST-CROP reference (matching time_final).
+    Note: raw_Dos arrays in the .npz are already post-crop despite their name,
+    so BBOX timestamps (i / FS_RAW) need no further conversion.
 
     Returns
     -------
     dict or None
-        signal_z, time, pert_entry, pert_exit (post-crop, s),
-        baseline_passages: list of (entry, exit) tuples,
-        n_pca_passages: total passages detected by PCA before filtering
+        signal_z, time, fs,
+        pert_entry, pert_exit  (post-crop, s),
+        baseline_passages: list of (entry, exit) tuples (post-crop, s),
+        n_pert_segments_raw, n_baseline_segments_raw
     """
     d = writer.load_processed(code, cond)
     signal_z = d['signal_final'].astype(float)
     time     = d['time_final'].astype(float)
+    fs       = int(d['fs_final'])
     sacrum_xy = _build_sacrum_xy(d)
 
-    # Perturbation via bbox
-    det_bbox = detection.detect_sand_by_bbox(sacrum_xy, min_duration_s=MIN_PASSAGE_S)
-    if det_bbox['n_segments'] == 0 or np.isnan(det_bbox['entry_t']):
-        return None
-    pert_entry = det_bbox['entry_t']
-    pert_exit  = det_bbox['exit_t']
-
-    # Baseline via PCA corridor
-    det_pca = detection.detect_sand_transition(
+    # ---- Perturbation: longest segment in sand bbox
+    det_sand = detection.detect_sand_by_bbox(
         sacrum_xy,
-        center=pca_calib['center'],
-        axis_main=pca_calib['axis_main'],
-        axis_perp=pca_calib['axis_perp'],
-        s_min=pca_calib['s_min'],
-        s_max=pca_calib['s_max'],
-        d_max=pca_calib['d_max'],
+        corners=config.BAC_SAND_CORNERS_MM,
+        margin_mm=config.BAC_SAND_MARGIN_MM,
         min_duration_s=MIN_PASSAGE_S,
     )
-    all_pca_passages = [(i0 / config.FS_RAW, i1 / config.FS_RAW)
-                         for (i0, i1) in det_pca['segments']]
+    if det_sand['n_segments'] == 0 or np.isnan(det_sand['entry_t']):
+        return None
+    pert_entry = det_sand['entry_t']
+    pert_exit  = det_sand['exit_t']
 
-    # Exclude passages overlapping the perturbation (±margin)
+    # ---- Baseline: all segments in lateral baseline bbox
+    det_baseline = detection.detect_sand_by_bbox(
+        sacrum_xy,
+        corners=config.BAC_BASELINE_LEFT_CORNERS_MM,
+        margin_mm=config.BAC_BASELINE_LEFT_MARGIN_MM,
+        min_duration_s=MIN_PASSAGE_S,
+    )
     baseline_passages = [
-        (e, x) for (e, x) in all_pca_passages
-        if not (abs(e - pert_entry) < PERT_BASELINE_MARGIN_S
-                 or (e <= pert_exit and x >= pert_entry))
+        (i0 / config.FS_RAW, i1 / config.FS_RAW)
+        for (i0, i1) in det_baseline['segments']
     ]
 
-    return {'signal_z':          signal_z,
-            'time':              time,
-            'pert_entry':        pert_entry,
-            'pert_exit':         pert_exit,
-            'baseline_passages': baseline_passages,
-            'n_pca_passages':    len(all_pca_passages)}
+    return {'signal_z':                 signal_z,
+            'time':                     time,
+            'fs':                       fs,
+            'pert_entry':               pert_entry,
+            'pert_exit':                pert_exit,
+            'baseline_passages':        baseline_passages,
+            'n_pert_segments_raw':      det_sand['n_segments'],
+            'n_baseline_segments_raw':  det_baseline['n_segments']}
 
 
-def load_all_trials(pca_calibs: dict, verbose: bool = True) -> dict:
-    """Load every non-excluded trial with its passage information."""
+def load_all_trials(verbose: bool = True) -> dict:
+    """Load every non-excluded trial with perturbation + baseline passages."""
     trials = {}
     for code, P in participants.PARTICIPANTS.items():
-        if code not in pca_calibs:
-            continue
         for cond, trial in P.trials.items():
             if trial.excluded:
                 continue
             try:
-                data = load_trial_with_passages(code, cond, pca_calibs[code])
+                data = load_trial_with_passages(code, cond)
             except FileNotFoundError:
                 if verbose:
                     print(f"  ⚠️  No .npz for {code}/{cond}")
                 continue
             if data is None:
                 if verbose:
-                    print(f"  ⚠️  {code}/{cond}: no bbox segment detected")
+                    print(f"  ⚠️  {code}/{cond}: no sand bbox segment detected")
                 continue
             trials[(code, cond)] = data
+    if verbose:
+        print(f"  ✅ {len(trials)} trials loaded")
     return trials
 
 
@@ -259,8 +249,13 @@ def compute_metrics(trials: dict, tde_params: dict,
     signals_cache = {}
 
     for (code, cond), data in trials.items():
+        if code not in tde_params:
+            if verbose:
+                print(f"  ⚠️  {code}/{cond}: no TDE params, skip")
+            continue
         tau, m = tde_params[code]
-        signals = compute_resilience_signals(data['signal_z'], tau=tau, m=m)
+        signals = compute_resilience_signals(data['signal_z'], tau=tau, m=m,
+                                                fs=data['fs'])
         signals_cache[(code, cond)] = signals
         t = signals['time']
         pert_duration = data['pert_exit'] - data['pert_entry']
@@ -276,7 +271,7 @@ def compute_metrics(trials: dict, tde_params: dict,
         pert_radius  = float(np.nanmean(signals['sig_radius'][pert_mask]))
         pert_cadence = float(np.nanmean(signals['sig_cadence'][pert_mask]))
 
-        # Baseline
+        # Baseline windows
         n_bl_raw = len(data['baseline_passages'])
         if n_bl_raw < MIN_BASELINE_PASSAGES:
             if verbose:
@@ -296,6 +291,7 @@ def compute_metrics(trials: dict, tde_params: dict,
         if len(bvars) < MIN_BASELINE_PASSAGES:
             if verbose:
                 print(f"  ⚠️  {code}/{cond}: only {len(bvars)} usable baseline passages → NaN")
+            rows.append(_nan_row(code, cond, len(bvars), pert_duration))
             continue
 
         baseline_var     = float(np.median(bvars))
